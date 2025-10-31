@@ -10,14 +10,22 @@ import json
 db = None
 try:
     firebase_config_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON')
+    
+    # DEBUG: Ver qué está pasando
+    print(f"🔍 Longitud de FIREBASE_SERVICE_ACCOUNT_JSON: {len(firebase_config_json) if firebase_config_json else 'VACÍA'}")
+    
     if firebase_config_json:
-        cred = credentials.Certificate(json.loads(firebase_config_json))
+        # Verificar que sea un JSON válido
+        firebase_config = json.loads(firebase_config_json)
+        cred = credentials.Certificate(firebase_config)
         firebase_admin.initialize_app(cred)
         db = firestore.client()
         print("✅ Firebase conectado exitosamente")
     else:
         print("⚠️  Firebase no configurado - FIREBASE_SERVICE_ACCOUNT_JSON no encontrada")
         
+except json.JSONDecodeError as e:
+    print(f"❌ Error en formato JSON: {e}")
 except Exception as e:
     print(f"❌ Error Firebase: {e}")
 
