@@ -59,7 +59,8 @@ def guardar_cita_firebase(patient_phone, patient_name, fecha, hora, status="conf
             'timestamp': firestore.SERVER_TIMESTAMP
         }
         
-        doc_ref = db.collection('appointments').add(cita_data)
+        doc_ref = db.collection('appointments').document()
+        doc_ref.set(cita_data)
         print(f"✅ Cita guardada en Firebase: {fecha} {hora} para {patient_phone}")
         return True
     except Exception as e:
