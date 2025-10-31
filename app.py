@@ -46,10 +46,10 @@ def guardar_cita_firebase(patient_phone, patient_name, fecha, hora, status="conf
         
     try:
         cita_data = {
-            'patient_phone': patient_phone,
-            'patient_name': patient_name,
-            'fecha': fecha,
-            'hora': hora,
+            'patient_phone': patient_phone,      # ← CORREGIR si en BD es 'partent_phone'
+            'patient_name': patient_name,        # ← CORREGIR si en BD es 'partent_name'
+            'appointment_date': fecha,           # ← CAMBIADO: 'fecha' → 'appointment_date'
+            'appointment_time': hora,            # ← CAMBIADO: 'hora' → 'appointment_time'
             'status': status,
             'timestamp': firestore.SERVER_TIMESTAMP
         }
@@ -69,7 +69,8 @@ def obtener_citas_paciente(patient_phone):
         
     try:
         citas_ref = db.collection('appointments')
-        query = citas_ref.where('patient_phone', '==', patient_phone).where('status', '==', 'confirmada')
+        # BUSCAR por el campo correcto que existe en tu BD
+        query = citas_ref.where('patient_phone', '==', patient_phone)  # ← Si no funciona, cambiar a 'partent_phone'
         citas = query.stream()
         
         citas_lista = []
@@ -92,7 +93,8 @@ def verificar_horario_disponible(fecha, hora):
         
     try:
         citas_ref = db.collection('appointments')
-        query = citas_ref.where('fecha', '==', fecha).where('hora', '==', hora).where('status', '==', 'confirmada')
+        # USAR los nombres de campos que existen en tu BD
+        query = citas_ref.where('appointment_date', '==', fecha).where('appointment_time', '==', hora)
         citas = query.stream()
         
         disponible = len(list(citas)) == 0
