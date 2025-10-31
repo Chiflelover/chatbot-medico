@@ -45,11 +45,16 @@ def guardar_cita_firebase(patient_phone, patient_name, fecha, hora, status="conf
         return True
         
     try:
+        # Intentar con ambos formatos de campos para mayor compatibilidad
         cita_data = {
-            'patient_phone': patient_phone,      # ← CORREGIR si en BD es 'partent_phone'
-            'patient_name': patient_name,        # ← CORREGIR si en BD es 'partent_name'
-            'appointment_date': fecha,           # ← CAMBIADO: 'fecha' → 'appointment_date'
-            'appointment_time': hora,            # ← CAMBIADO: 'hora' → 'appointment_time'
+            'patient_phone': patient_phone,      # Formato nuevo
+            'partent_phone': patient_phone,      # Formato viejo (si existe)
+            'patient_name': patient_name,        # Formato nuevo  
+            'partent_name': patient_name,        # Formato viejo (si existe)
+            'appointment_date': fecha,           # Formato que existe en tu BD
+            'appointment_time': hora,            # Formato que existe en tu BD
+            'fecha': fecha,                      # Formato nuevo por si acaso
+            'hora': hora,                        # Formato nuevo por si acaso
             'status': status,
             'timestamp': firestore.SERVER_TIMESTAMP
         }
@@ -69,18 +74,27 @@ def obtener_citas_paciente(patient_phone):
         
     try:
         citas_ref = db.collection('appointments')
-        # BUSCAR por el campo correcto que existe en tu BD
-        query = citas_ref.where('patient_phone', '==', patient_phone)  # ← Si no funciona, cambiar a 'partent_phone'
-        citas = query.stream()
         
+        # Intentar buscar con ambos nombres de campo
         citas_lista = []
-        for cita in citas:
+        try:
+            query = citas_ref.where('patient_phone', '==', patient_phone)
+            citas = query.stream()
+            citas_lista = list(citas)
+        except:
+            # Si falla, intentar con el nombre alternativo
+            query = citas_ref.where('partent_phone', '==', patient_phone)
+            citas = query.stream()
+            citas_lista = list(citas)
+        
+        citas_data = []
+        for cita in citas_lista:
             cita_data = cita.to_dict()
             cita_data['id'] = cita.id
-            citas_lista.append(cita_data)
+            citas_data.append(cita_data)
             
-        print(f"✅ Obtenidas {len(citas_lista)} citas para {patient_phone}")
-        return citas_lista
+        print(f"✅ Obtenidas {len(citas_data)} citas para {patient_phone}")
+        return citas_data
     except Exception as e:
         print(f"❌ Error obteniendo citas: {e}")
         return []
@@ -93,9 +107,14 @@ def verificar_horario_disponible(fecha, hora):
         
     try:
         citas_ref = db.collection('appointments')
-        # USAR los nombres de campos que existen en tu BD
-        query = citas_ref.where('appointment_date', '==', fecha).where('appointment_time', '==', hora)
-        citas = query.stream()
+        
+        # Intentar con ambos formatos de fecha/hora
+        try:
+            query = citas_ref.where('appointment_date', '==', fecha).where('appointment_time', '==', hora)
+            citas = query.stream()
+        except:
+            query = citas_ref.where('fecha', '==', fecha).where('hora', '==', hora)
+            citas = query.stream()
         
         disponible = len(list(citas)) == 0
         print(f"🔍 Horario {fecha} {hora} - Disponible: {disponible}")
