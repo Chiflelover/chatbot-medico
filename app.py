@@ -8,28 +8,21 @@ import json
 
 # ==================== CONFIGURACIÓN FIREBASE ====================
 db = None
-
-print("=== INICIANDO CONFIGURACIÓN FIREBASE ===")
-
-# Buscar la variable con el nuevo nombre
-firebase_config_json = os.environ.get('FIREBASE_CREDENTIALS')
-
-if firebase_config_json:
-    print(f"✅ VARIABLE ENCONTRADA - Longitud: {len(firebase_config_json)} caracteres")
-    try:
+try:
+    firebase_config_json = os.environ.get('FIREBASE_CREDENTIALS')
+    if firebase_config_json:
         firebase_config = json.loads(firebase_config_json)
         cred = credentials.Certificate(firebase_config)
         firebase_admin.initialize_app(cred)
         db = firestore.client()
-        print("🎉 FIREBASE CONECTADO EXITOSAMENTE")
-    except Exception as e:
-        print(f"💥 ERROR: {e}")
-        db = None
-else:
-    print("❌ Variable FIREBASE_CREDENTIALS no encontrada")
-    db = None
+        print("✅ Firebase conectado exitosamente")
+except Exception as e:
+    print(f"❌ Error Firebase: {e}")
 
 app = Flask(__name__)
+
+# ==================== ESTADOS DE USUARIO ====================
+estados_usuarios = {}
 
 # ==================== HORARIOS DISPONIBLES ====================
 HORARIOS_DISPONIBLES = [
@@ -45,23 +38,17 @@ def guardar_cita_firebase(patient_phone, patient_name, fecha, hora, status="conf
         return True
         
     try:
-        # Intentar con ambos formatos de campos para mayor compatibilidad
         cita_data = {
-            'patient_phone': patient_phone,      # Formato nuevo
-            'partent_phone': patient_phone,      # Formato viejo (si existe)
-            'patient_name': patient_name,        # Formato nuevo  
-            'partent_name': patient_name,        # Formato viejo (si existe)
-            'appointment_date': fecha,           # Formato que existe en tu BD
-            'appointment_time': hora,            # Formato que existe en tu BD
-            'fecha': fecha,                      # Formato nuevo por si acaso
-            'hora': hora,                        # Formato nuevo por si acaso
+            'patient_phone': patient_phone,
+            'patient_name': patient_name,
+            'appointment_date': fecha,
+            'appointment_time': hora,
             'status': status,
             'timestamp': firestore.SERVER_TIMESTAMP
         }
         
-        doc_ref = db.collection('appointments').document()
-        doc_ref.set(cita_data)
-        print(f"✅ Cita guardada en Firebase: {fecha} {hora} para {patient_phone}")
+        doc_ref = db.collection('appointments').add(cita_data)
+        print(f"✅ Cita guardada para {patient_name}: {fecha} {hora}")
         return True
     except Exception as e:
         print(f"❌ Error guardando en Firebase: {e}")
@@ -70,32 +57,20 @@ def guardar_cita_firebase(patient_phone, patient_name, fecha, hora, status="conf
 def obtener_citas_paciente(patient_phone):
     """Obtiene las citas de un paciente"""
     if db is None:
-        print("⚠️ Modo sin Firebase - retornando lista vacía")
         return []
         
     try:
         citas_ref = db.collection('appointments')
+        query = citas_ref.where('patient_phone', '==', patient_phone)
+        citas = query.stream()
         
-        # Intentar buscar con ambos nombres de campo
         citas_lista = []
-        try:
-            query = citas_ref.where('patient_phone', '==', patient_phone)
-            citas = query.stream()
-            citas_lista = list(citas)
-        except:
-            # Si falla, intentar con el nombre alternativo
-            query = citas_ref.where('partent_phone', '==', patient_phone)
-            citas = query.stream()
-            citas_lista = list(citas)
-        
-        citas_data = []
-        for cita in citas_lista:
+        for cita in citas:
             cita_data = cita.to_dict()
             cita_data['id'] = cita.id
-            citas_data.append(cita_data)
+            citas_lista.append(cita_data)
             
-        print(f"✅ Obtenidas {len(citas_data)} citas para {patient_phone}")
-        return citas_data
+        return citas_lista
     except Exception as e:
         print(f"❌ Error obteniendo citas: {e}")
         return []
@@ -103,26 +78,34 @@ def obtener_citas_paciente(patient_phone):
 def verificar_horario_disponible(fecha, hora):
     """Verifica si un horario está disponible"""
     if db is None:
-        print("⚠️ Modo sin Firebase - horario siempre disponible")
         return True
         
     try:
         citas_ref = db.collection('appointments')
+        query = citas_ref.where('appointment_date', '==', fecha).where('appointment_time', '==', hora)
+        citas = query.stream()
         
-        # Intentar con ambos formatos de fecha/hora
-        try:
-            query = citas_ref.where('appointment_date', '==', fecha).where('appointment_time', '==', hora)
-            citas = query.stream()
-        except:
-            query = citas_ref.where('fecha', '==', fecha).where('hora', '==', hora)
-            citas = query.stream()
-        
-        disponible = len(list(citas)) == 0
-        print(f"🔍 Horario {fecha} {hora} - Disponible: {disponible}")
-        return disponible
+        return len(list(citas)) == 0
     except Exception as e:
         print(f"❌ Error verificando horario: {e}")
         return True
+
+def normalizar_hora(hora_str):
+    """Convierte formatos de hora como '8:00' a '08:00'"""
+    try:
+        hora_str = hora_str.strip()
+        if hora_str in HORARIOS_DISPONIBLES:
+            return hora_str
+            
+        if ':' in hora_str:
+            partes = hora_str.split(':')
+            horas = partes[0].zfill(2)
+            minutos = partes[1] if len(partes) > 1 else "00"
+            return f"{horas}:{minutos}"
+        else:
+            return f"{hora_str.zfill(2)}:00"
+    except:
+        return hora_str
 
 # ==================== RUTAS DEL CHATBOT ====================
 @app.route("/webhook", methods=['POST'])
@@ -134,6 +117,28 @@ def webhook():
     
     resp = MessagingResponse()
     
+    # Verificar si está en medio de una conversación para nombre
+    if user_phone in estados_usuarios and estados_usuarios[user_phone]['accion'] == 'esperando_nombre':
+        nombre_paciente = user_message.strip()
+        datos_temporales = estados_usuarios[user_phone]
+        
+        if guardar_cita_firebase(user_phone, nombre_paciente, datos_temporales['fecha'], datos_temporales['hora']):
+            del estados_usuarios[user_phone]
+            
+            resp.message(f"""✅ *¡CITA AGENDADA EXITOSAMENTE!*
+
+👤 Paciente: {nombre_paciente}
+📅 Fecha: {datos_temporales['fecha']}
+🕐 Hora: {datos_temporales['hora']}
+🏥 Estado: CONFIRMADA
+
+Recibirás un recordatorio antes de tu cita. ¡Te esperamos!""")
+        else:
+            resp.message("❌ Error al guardar la cita. Intenta nuevamente.")
+        
+        return str(resp)
+    
+    # Comandos normales
     if 'hola' in user_message:
         mensaje = """👋 ¡Hola! Soy tu asistente médico. 
 
@@ -159,27 +164,24 @@ def webhook():
             fecha = f"{partes[1]} {partes[2]}"  # "15 noviembre"
             
             if len(partes) >= 4:
-                hora = partes[3]  # "10:00"
+                hora_input = partes[3]
+                hora_normalizada = normalizar_hora(hora_input)
                 
-                # Verificar si el horario está disponible
-                if hora in HORARIOS_DISPONIBLES:
-                    if verificar_horario_disponible(fecha, hora):
-                        # Guardar la cita en Firebase
-                        nombre_paciente = "Paciente"  # Podemos pedir el nombre después
-                        if guardar_cita_firebase(user_phone, nombre_paciente, fecha, hora):
-                            resp.message(f"""✅ *¡CITA AGENDADA EXITOSAMENTE!*
-
-📅 Fecha: {fecha}
-🕐 Hora: {hora}
-🏥 Estado: CONFIRMADA
-
-Recibirás un recordatorio antes de tu cita. ¡Te esperamos!""")
-                        else:
-                            resp.message("❌ Error al guardar la cita en el sistema. Intenta nuevamente.")
+                if hora_normalizada in HORARIOS_DISPONIBLES:
+                    if verificar_horario_disponible(fecha, hora_normalizada):
+                        estados_usuarios[user_phone] = {
+                            'accion': 'esperando_nombre',
+                            'fecha': fecha,
+                            'hora': hora_normalizada
+                        }
+                        resp.message("📝 Por favor, escribe tu *NOMBRE COMPLETO* para confirmar la cita:")
                     else:
-                        resp.message(f"❌ El horario {hora} del {fecha} ya está ocupado. Escribe HORARIOS para ver disponibilidad.")
+                        resp.message(f"❌ El horario {hora_normalizada} del {fecha} ya está ocupado. Escribe HORARIOS para ver disponibilidad.")
                 else:
-                    resp.message(f"❌ Horario no válido. Escribe HORARIOS para ver los horarios disponibles.")
+                    mensaje_error = f"❌ Horario '{hora_input}' no válido.\n\n🕐 *Horarios disponibles:*\n"
+                    for i, hora in enumerate(HORARIOS_DISPONIBLES, 1):
+                        mensaje_error += f"{i}. {hora}\n"
+                    resp.message(mensaje_error)
             else:
                 resp.message("❌ Formato incorrecto. Usa: AGENDAR [día] [mes] [hora]\nEjemplo: AGENDAR 15 noviembre 10:00")
         else:
@@ -198,7 +200,8 @@ Escribe HORARIOS para ver disponibilidad.""")
         if citas:
             mensaje = "📋 *Tus citas confirmadas:*\n\n"
             for i, cita in enumerate(citas, 1):
-                mensaje += f"{i}. 📅 {cita.get('fecha', 'N/A')} - 🕐 {cita.get('hora', 'N/A')}\n"
+                nombre = cita.get('patient_name', 'Paciente')
+                mensaje += f"{i}. 👤 {nombre} - 📅 {cita.get('appointment_date', 'N/A')} - 🕐 {cita.get('appointment_time', 'N/A')}\n"
             resp.message(mensaje)
         else:
             resp.message("📭 No tienes citas agendadas.\n\nEscribe AGENDAR para programar una cita.")
