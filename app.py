@@ -7,28 +7,19 @@ from datetime import datetime
 import json
 
 # ==================== CONFIGURACIÓN FIREBASE ====================
+db = None
 try:
-    # Opción 1: Desde variable de entorno con JSON completo
     firebase_config_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON')
-    
     if firebase_config_json:
-        # Si está en variable de entorno como string JSON
-        firebase_config = json.loads(firebase_config_json)
-        cred = credentials.Certificate(firebase_config)
-        print("✅ Configuración Firebase cargada desde variable JSON")
+        cred = credentials.Certificate(json.loads(firebase_config_json))
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("✅ Firebase conectado exitosamente")
     else:
-        # Opción 2: Para desarrollo local con archivo
-        cred = credentials.Certificate("citas-medicas-76b18-firebase-adminsdk-fbsvc-280179dfd0.json")
-        print("✅ Configuración Firebase cargada desde archivo local")
-    
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-    print("✅ Firebase conectado exitosamente")
-    
+        print("⚠️  Firebase no configurado - FIREBASE_SERVICE_ACCOUNT_JSON no encontrada")
+        
 except Exception as e:
-    print(f"❌ Error conectando Firebase: {e}")
-    # Modo sin Firebase para desarrollo
-    db = None
+    print(f"❌ Error Firebase: {e}")
 
 app = Flask(__name__)
 
