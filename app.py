@@ -8,16 +8,18 @@ import json
 
 # ==================== CONFIGURACIÓN FIREBASE ====================
 try:
-    # Opción A: Desde variable de entorno con JSON completo
+    # Opción 1: Desde variable de entorno con JSON completo
     firebase_config_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON')
     
     if firebase_config_json:
         # Si está en variable de entorno como string JSON
         firebase_config = json.loads(firebase_config_json)
         cred = credentials.Certificate(firebase_config)
+        print("✅ Configuración Firebase cargada desde variable JSON")
     else:
-        # Opción B: Para desarrollo local con archivo
+        # Opción 2: Para desarrollo local con archivo
         cred = credentials.Certificate("citas-medicas-76b18-firebase-adminsdk-fbsvc-280179dfd0.json")
+        print("✅ Configuración Firebase cargada desde archivo local")
     
     firebase_admin.initialize_app(cred)
     db = firestore.client()
@@ -27,17 +29,6 @@ except Exception as e:
     print(f"❌ Error conectando Firebase: {e}")
     # Modo sin Firebase para desarrollo
     db = None
-    
-    # Después de la configuración de Firebase
-if db:
-    print("🔥 Probando conexión a Firebase...")
-    try:
-        # Intenta escribir un documento de prueba
-        doc_ref = db.collection('connection_test').document('test')
-        doc_ref.set({'timestamp': firestore.SERVER_TIMESTAMP})
-        print("✅ Escritura en Firebase exitosa")
-    except Exception as e:
-        print(f"❌ Error escribiendo en Firebase: {e}")
 
 app = Flask(__name__)
 
