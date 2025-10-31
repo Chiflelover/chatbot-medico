@@ -6,22 +6,110 @@ from firebase_admin import credentials, firestore
 from datetime import datetime
 import json
 
-# Configuración de Firebase (usa tu código actual)
+# ==================== CONFIGURACIÓN FIREBASE ====================
+try:
+    # Configuración para Railway (usando variables de entorno)
+    firebase_config = {
+        "type": "service_account",
+        "project_id": os.environ.get('FIREBASE_PROJECT_ID'),
+        "private_key_id": os.environ.get('FIREBASE_PRIVATE_KEY_ID'),
+        "private_key": os.environ.get('FIREBASE_PRIVATE_KEY').replace('\\n', '\n'),
+        "client_email": os.environ.get('FIREBASE_CLIENT_EMAIL'),
+        "client_id": os.environ.get('FIREBASE_CLIENT_ID'),
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    
+    cred = credentials.Certificate(firebase_config)
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("✅ Firebase conectado exitosamente")
+    
+except Exception as e:
+    print(f"❌ Error conectando Firebase: {e}")
+    # Modo sin Firebase para desarrollo
+    db = None
 
 app = Flask(__name__)
 
-# Horarios disponibles predefinidos
+# ==================== HORARIOS DISPONIBLES ====================
 HORARIOS_DISPONIBLES = [
     "08:00", "09:00", "10:00", "11:00", 
     "14:00", "15:00", "16:00", "17:00"
 ]
 
+# ==================== FUNCIONES FIREBASE ====================
+def guardar_cita_firebase(patient_phone, patient_name, fecha, hora, status="confirmada"):
+    """Guarda una cita en Firebase"""
+    if db is None:
+        print("⚠️ Modo sin Firebase - cita no guardada en BD")
+        return True
+        
+    try:
+        cita_data = {
+            'patient_phone': patient_phone,
+            'patient_name': patient_name,
+            'fecha': fecha,
+            'hora': hora,
+            'status': status,
+            'timestamp': firestore.SERVER_TIMESTAMP
+        }
+        
+        doc_ref = db.collection('appointments').add(cita_data)
+        print(f"✅ Cita guardada en Firebase: {fecha} {hora} para {patient_phone}")
+        return True
+    except Exception as e:
+        print(f"❌ Error guardando en Firebase: {e}")
+        return False
+
+def obtener_citas_paciente(patient_phone):
+    """Obtiene las citas de un paciente"""
+    if db is None:
+        print("⚠️ Modo sin Firebase - retornando lista vacía")
+        return []
+        
+    try:
+        citas_ref = db.collection('appointments')
+        query = citas_ref.where('patient_phone', '==', patient_phone).where('status', '==', 'confirmada')
+        citas = query.stream()
+        
+        citas_lista = []
+        for cita in citas:
+            cita_data = cita.to_dict()
+            cita_data['id'] = cita.id
+            citas_lista.append(cita_data)
+            
+        print(f"✅ Obtenidas {len(citas_lista)} citas para {patient_phone}")
+        return citas_lista
+    except Exception as e:
+        print(f"❌ Error obteniendo citas: {e}")
+        return []
+
+def verificar_horario_disponible(fecha, hora):
+    """Verifica si un horario está disponible"""
+    if db is None:
+        print("⚠️ Modo sin Firebase - horario siempre disponible")
+        return True
+        
+    try:
+        citas_ref = db.collection('appointments')
+        query = citas_ref.where('fecha', '==', fecha).where('hora', '==', hora).where('status', '==', 'confirmada')
+        citas = query.stream()
+        
+        disponible = len(list(citas)) == 0
+        print(f"🔍 Horario {fecha} {hora} - Disponible: {disponible}")
+        return disponible
+    except Exception as e:
+        print(f"❌ Error verificando horario: {e}")
+        return True
+
+# ==================== RUTAS DEL CHATBOT ====================
 @app.route("/webhook", methods=['POST'])
 def webhook():
     user_message = request.form['Body'].lower()
     user_phone = request.form['From']
     
-    print(f"Mensaje de {user_phone}: {user_message}")
+    print(f"📱 Mensaje de {user_phone}: {user_message}")
     
     resp = MessagingResponse()
     
@@ -54,10 +142,10 @@ def webhook():
                 
                 # Verificar si el horario está disponible
                 if hora in HORARIOS_DISPONIBLES:
-                    # Verificar si el horario ya está ocupado
                     if verificar_horario_disponible(fecha, hora):
-                        # Guardar la cita
-                        if guardar_cita_firebase(user_phone, "Paciente", fecha, hora):
+                        # Guardar la cita en Firebase
+                        nombre_paciente = "Paciente"  # Podemos pedir el nombre después
+                        if guardar_cita_firebase(user_phone, nombre_paciente, fecha, hora):
                             resp.message(f"""✅ *¡CITA AGENDADA EXITOSAMENTE!*
 
 📅 Fecha: {fecha}
@@ -66,11 +154,11 @@ def webhook():
 
 Recibirás un recordatorio antes de tu cita. ¡Te esperamos!""")
                         else:
-                            resp.message("❌ Error al guardar la cita. Intenta nuevamente.")
+                            resp.message("❌ Error al guardar la cita en el sistema. Intenta nuevamente.")
                     else:
-                        resp.message(f"❌ El horario {hora} del {fecha} ya está ocupado. Elige otro horario.")
+                        resp.message(f"❌ El horario {hora} del {fecha} ya está ocupado. Escribe HORARIOS para ver disponibilidad.")
                 else:
-                    resp.message(f"❌ Horario no válido. Horarios disponibles: {', '.join(HORARIOS_DISPONIBLES)}")
+                    resp.message(f"❌ Horario no válido. Escribe HORARIOS para ver los horarios disponibles.")
             else:
                 resp.message("❌ Formato incorrecto. Usa: AGENDAR [día] [mes] [hora]\nEjemplo: AGENDAR 15 noviembre 10:00")
         else:
@@ -108,60 +196,10 @@ Escribe HORARIOS para ver disponibilidad.""")
     
     return str(resp)
 
-def verificar_horario_disponible(fecha, hora):
-    """Verifica si un horario está disponible"""
-    try:
-        if db is None:
-            return True
-            
-        citas_ref = db.collection('appointments')
-        query = citas_ref.where('fecha', '==', fecha).where('hora', '==', hora)
-        citas = query.stream()
-        
-        return len(list(citas)) == 0
-    except Exception as e:
-        print(f"Error verificando horario: {e}")
-        return True
-
-def guardar_cita_firebase(patient_phone, patient_name, fecha, hora, status="confirmada"):
-    """Guarda una cita en Firebase"""
-    if db is None:
-        return True
-        
-    try:
-        cita_data = {
-            'patient_phone': patient_phone,
-            'patient_name': patient_name,
-            'fecha': fecha,
-            'hora': hora,
-            'status': status,
-            'timestamp': firestore.SERVER_TIMESTAMP
-        }
-        
-        db.collection('appointments').add(cita_data)
-        return True
-    except Exception as e:
-        print(f"Error guardando cita: {e}")
-        return False
-
-def obtener_citas_paciente(patient_phone):
-    """Obtiene las citas de un paciente"""
-    if db is None:
-        return []
-        
-    try:
-        citas_ref = db.collection('appointments')
-        query = citas_ref.where('patient_phone', '==', patient_phone).where('status', '==', 'confirmada')
-        citas = query.stream()
-        
-        return [cita.to_dict() for cita in citas]
-    except Exception as e:
-        print(f"Error obteniendo citas: {e}")
-        return []
-
 @app.route("/")
 def home():
-    return "Sistema de citas médicas funcionando!"
+    estado_firebase = "conectado" if db else "no conectado"
+    return f"Sistema de citas médicas funcionando! Firebase: {estado_firebase}"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
