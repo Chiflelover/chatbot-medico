@@ -8,19 +8,17 @@ import json
 
 # ==================== CONFIGURACIÓN FIREBASE ====================
 try:
-    # Configuración para Railway (usando variables de entorno)
-    firebase_config = {
-        "type": "service_account",
-        "project_id": os.environ.get('FIREBASE_PROJECT_ID'),
-        "private_key_id": os.environ.get('FIREBASE_PRIVATE_KEY_ID'),
-        "private_key": os.environ.get('FIREBASE_PRIVATE_KEY').replace('\\n', '\n'),
-        "client_email": os.environ.get('FIREBASE_CLIENT_EMAIL'),
-        "client_id": os.environ.get('FIREBASE_CLIENT_ID'),
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-    }
+    # Opción A: Desde variable de entorno con JSON completo
+    firebase_config_json = os.environ.get('FIREBASE_SERVICE_ACCOUNT_JSON')
     
-    cred = credentials.Certificate(firebase_config)
+    if firebase_config_json:
+        # Si está en variable de entorno como string JSON
+        firebase_config = json.loads(firebase_config_json)
+        cred = credentials.Certificate(firebase_config)
+    else:
+        # Opción B: Para desarrollo local con archivo
+        cred = credentials.Certificate("citas-medicas-76b18-firebase-adminsdk-fbsvc-280179dfd0.json")
+    
     firebase_admin.initialize_app(cred)
     db = firestore.client()
     print("✅ Firebase conectado exitosamente")
@@ -29,6 +27,17 @@ except Exception as e:
     print(f"❌ Error conectando Firebase: {e}")
     # Modo sin Firebase para desarrollo
     db = None
+    
+    # Después de la configuración de Firebase
+if db:
+    print("🔥 Probando conexión a Firebase...")
+    try:
+        # Intenta escribir un documento de prueba
+        doc_ref = db.collection('connection_test').document('test')
+        doc_ref.set({'timestamp': firestore.SERVER_TIMESTAMP})
+        print("✅ Escritura en Firebase exitosa")
+    except Exception as e:
+        print(f"❌ Error escribiendo en Firebase: {e}")
 
 app = Flask(__name__)
 
